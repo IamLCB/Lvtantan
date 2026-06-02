@@ -1,3 +1,6 @@
 .DS_Store
 xcuserdata/
 *.xcuserstate
+__pycache__/
+.pytest_cache/
+backend/lvtantan.db
