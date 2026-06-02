@@ -21,7 +21,7 @@ enum MoneyExpression {
     private static func round(_ value: Decimal, scale: Int) -> Decimal {
         var source = value
         var result = Decimal()
-        NSDecimalRound(&result, &source, scale, .bankers)
+        NSDecimalRound(&result, &source, scale, .plain)
         return result
     }
 }
