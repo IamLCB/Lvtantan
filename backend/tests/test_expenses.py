@@ -1,3 +1,12 @@
+from decimal import Decimal
+
+from app.database import get_db
+from app.main import app
+from app.models import Member
+from app.routers import trips
+from app.services.settlements import MemberSummary, SettlementResult
+
+
 def create_user(test_client, username):
     return test_client.post("/users", json={"username": username}).json()
 
@@ -59,6 +68,60 @@ def test_get_settlement_splits_across_all_active_members(test_client):
         "to_member_name": "小李",
         "amount": "50.00",
     }]
+
+
+def test_get_settlement_passes_all_trip_expenses_to_calculator(test_client, monkeypatch):
+    creator, friend, trip = create_trip_with_two_members(test_client)
+    test_client.post(f"/trips/{trip['id']}/expenses", json={
+        "user_id": friend["id"],
+        "amount": "100.00",
+        "expression_text": "100",
+        "category_name": "餐饮",
+        "spent_at": "2026-06-02T12:00:00Z",
+        "note": "晚饭",
+    })
+
+    db_generator = app.dependency_overrides[get_db]()
+    db = next(db_generator)
+    try:
+        creator_member = db.query(Member).filter(
+            Member.trip_id == trip["id"],
+            Member.user_id == creator["id"],
+        ).one()
+        inactive_payer = db.query(Member).filter(
+            Member.trip_id == trip["id"],
+            Member.user_id == friend["id"],
+        ).one()
+        inactive_payer.status = "inactive"
+        creator_member_id = creator_member.id
+        inactive_payer_id = inactive_payer.id
+        db.commit()
+    finally:
+        db.close()
+        db_generator.close()
+
+    def fake_calculate_settlement(members, expenses):
+        assert [member.id for member in members] == [creator_member_id]
+        assert len(expenses) == 1
+        assert expenses[0].paid_by_member_id == inactive_payer_id
+        return SettlementResult(
+            member_summaries={
+                creator_member_id: MemberSummary(
+                    member_id=creator_member_id,
+                    name="小李",
+                    paid=Decimal("0.00"),
+                    owed=Decimal("0.00"),
+                    balance=Decimal("0.00"),
+                )
+            },
+            transfers=[],
+        )
+
+    monkeypatch.setattr(trips, "calculate_settlement", fake_calculate_settlement)
+
+    response = test_client.get(f"/trips/{trip['id']}/settlement")
+
+    assert response.status_code == 200
 
 
 def test_update_expense_allows_any_member_and_increments_version(test_client):

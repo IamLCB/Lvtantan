@@ -113,7 +113,6 @@ def get_settlement(trip_id: str, db: Session = Depends(get_db)) -> SettlementRes
         expenses=[
             ExpenseInput(amount=expense.amount, paid_by_member_id=expense.paid_by_member_id)
             for expense in trip.expenses
-            if any(member.id == expense.paid_by_member_id for member in active_members)
         ],
     )
     member_names = {member.id: member.name for member in active_members}
