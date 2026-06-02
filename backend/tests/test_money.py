@@ -21,3 +21,13 @@ def test_normalize_amount_rejects_zero():
 def test_normalize_amount_rejects_negative():
     with pytest.raises(ValueError):
         normalize_amount("-1.00")
+
+
+def test_normalize_amount_rejects_nan():
+    with pytest.raises(ValueError):
+        normalize_amount("NaN")
+
+
+def test_normalize_amount_rejects_infinity():
+    with pytest.raises(ValueError):
+        normalize_amount("Infinity")
