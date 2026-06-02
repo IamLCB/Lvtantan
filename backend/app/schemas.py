@@ -73,6 +73,13 @@ class ExpenseCreate(BaseModel):
     spent_at: datetime
     note: str | None = Field(default=None, max_length=120)
 
+    @field_validator("category_name", mode="before")
+    @classmethod
+    def strip_category_name(cls, value: str) -> str:
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
 
 class ExpenseDelete(BaseModel):
     user_id: str

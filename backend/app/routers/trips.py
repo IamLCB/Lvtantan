@@ -83,6 +83,32 @@ def format_money(value) -> str:
     return f"{value:.2f}"
 
 
+def settlement_members_for(trip: Trip) -> list[Member]:
+    members_by_id = {member.id: member for member in trip.members}
+    included_member_ids = set()
+    settlement_members = []
+
+    active_members = [member for member in trip.members if member.status == "active"]
+    active_members.sort(key=lambda member: member.joined_at)
+    for member in active_members:
+        settlement_members.append(member)
+        included_member_ids.add(member.id)
+
+    historical_payers = [
+        members_by_id[expense.paid_by_member_id]
+        for expense in trip.expenses
+        if expense.paid_by_member_id in members_by_id
+        and expense.paid_by_member_id not in included_member_ids
+    ]
+    historical_payers.sort(key=lambda member: member.joined_at)
+    for member in historical_payers:
+        if member.id not in included_member_ids:
+            settlement_members.append(member)
+            included_member_ids.add(member.id)
+
+    return settlement_members
+
+
 def find_trip_by_invite_code(db: Session, invite_code: str) -> Trip | None:
     return db.query(Trip).filter(Trip.invite_code == invite_code.upper()).first()
 
@@ -106,18 +132,17 @@ def get_trip(trip_id: str, db: Session = Depends(get_db)) -> TripDetailResponse:
 @router.get("/{trip_id}/settlement", response_model=SettlementResponse)
 def get_settlement(trip_id: str, db: Session = Depends(get_db)) -> SettlementResponse:
     trip = find_trip(db, trip_id)
-    active_members = [member for member in trip.members if member.status == "active"]
-    active_members.sort(key=lambda member: member.joined_at)
+    settlement_members = settlement_members_for(trip)
     result = calculate_settlement(
-        members=[MemberInput(id=member.id, name=member.name) for member in active_members],
+        members=[MemberInput(id=member.id, name=member.name) for member in settlement_members],
         expenses=[
             ExpenseInput(amount=expense.amount, paid_by_member_id=expense.paid_by_member_id)
             for expense in trip.expenses
         ],
     )
-    member_names = {member.id: member.name for member in active_members}
+    member_names = {member.id: member.name for member in settlement_members}
     members = []
-    for member in active_members:
+    for member in settlement_members:
         summary = result.member_summaries[member.id]
         members.append(
             SettlementMemberResponse(

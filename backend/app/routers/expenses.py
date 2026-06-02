@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Body, Depends, HTTPException, Response, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -33,7 +34,13 @@ def get_or_create_category(db: Session, category_name: str) -> Category:
         return category
     category = Category(name=category_name)
     db.add(category)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        category = db.query(Category).filter(Category.name == category_name).first()
+        if category is None:
+            raise
     return category
 
 

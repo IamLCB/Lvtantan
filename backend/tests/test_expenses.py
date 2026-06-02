@@ -1,10 +1,6 @@
-from decimal import Decimal
-
 from app.database import get_db
 from app.main import app
 from app.models import Member
-from app.routers import trips
-from app.services.settlements import MemberSummary, SettlementResult
 
 
 def create_user(test_client, username):
@@ -25,6 +21,23 @@ def create_trip_with_two_members(test_client):
     return creator, friend, trip
 
 
+def deactivate_trip_member(trip_id, user_id):
+    db_generator = app.dependency_overrides[get_db]()
+    db = next(db_generator)
+    try:
+        member = db.query(Member).filter(
+            Member.trip_id == trip_id,
+            Member.user_id == user_id,
+        ).one()
+        member.status = "inactive"
+        member_id = member.id
+        db.commit()
+        return member_id
+    finally:
+        db.close()
+        db_generator.close()
+
+
 def test_create_expense_defaults_payer_to_registering_member(test_client):
     creator, friend, trip = create_trip_with_two_members(test_client)
 
@@ -41,6 +54,37 @@ def test_create_expense_defaults_payer_to_registering_member(test_client):
     body = response.json()
     assert body["amount"] == "128.50"
     assert body["created_by_member_id"] == body["paid_by_member_id"]
+
+
+def test_create_expense_trims_category_name(test_client):
+    creator, friend, trip = create_trip_with_two_members(test_client)
+
+    response = test_client.post(f"/trips/{trip['id']}/expenses", json={
+        "user_id": creator["id"],
+        "amount": "128.50",
+        "expression_text": "100+28.5",
+        "category_name": " 餐饮 ",
+        "spent_at": "2026-06-02T12:00:00Z",
+        "note": "第一天晚饭",
+    })
+
+    assert response.status_code == 201
+    assert response.json()["category_name"] == "餐饮"
+
+
+def test_create_expense_rejects_whitespace_only_category_name(test_client):
+    creator, friend, trip = create_trip_with_two_members(test_client)
+
+    response = test_client.post(f"/trips/{trip['id']}/expenses", json={
+        "user_id": creator["id"],
+        "amount": "128.50",
+        "expression_text": "100+28.5",
+        "category_name": "   ",
+        "spent_at": "2026-06-02T12:00:00Z",
+        "note": "第一天晚饭",
+    })
+
+    assert response.status_code == 422
 
 
 def test_get_settlement_splits_across_all_active_members(test_client):
@@ -70,7 +114,7 @@ def test_get_settlement_splits_across_all_active_members(test_client):
     }]
 
 
-def test_get_settlement_passes_all_trip_expenses_to_calculator(test_client, monkeypatch):
+def test_get_settlement_includes_historical_inactive_payer(test_client):
     creator, friend, trip = create_trip_with_two_members(test_client)
     test_client.post(f"/trips/{trip['id']}/expenses", json={
         "user_id": friend["id"],
@@ -80,48 +124,22 @@ def test_get_settlement_passes_all_trip_expenses_to_calculator(test_client, monk
         "spent_at": "2026-06-02T12:00:00Z",
         "note": "晚饭",
     })
-
-    db_generator = app.dependency_overrides[get_db]()
-    db = next(db_generator)
-    try:
-        creator_member = db.query(Member).filter(
-            Member.trip_id == trip["id"],
-            Member.user_id == creator["id"],
-        ).one()
-        inactive_payer = db.query(Member).filter(
-            Member.trip_id == trip["id"],
-            Member.user_id == friend["id"],
-        ).one()
-        inactive_payer.status = "inactive"
-        creator_member_id = creator_member.id
-        inactive_payer_id = inactive_payer.id
-        db.commit()
-    finally:
-        db.close()
-        db_generator.close()
-
-    def fake_calculate_settlement(members, expenses):
-        assert [member.id for member in members] == [creator_member_id]
-        assert len(expenses) == 1
-        assert expenses[0].paid_by_member_id == inactive_payer_id
-        return SettlementResult(
-            member_summaries={
-                creator_member_id: MemberSummary(
-                    member_id=creator_member_id,
-                    name="小李",
-                    paid=Decimal("0.00"),
-                    owed=Decimal("0.00"),
-                    balance=Decimal("0.00"),
-                )
-            },
-            transfers=[],
-        )
-
-    monkeypatch.setattr(trips, "calculate_settlement", fake_calculate_settlement)
+    inactive_payer_id = deactivate_trip_member(trip["id"], friend["id"])
 
     response = test_client.get(f"/trips/{trip['id']}/settlement")
 
     assert response.status_code == 200
+    body = response.json()
+    balances = {member["name"]: member["balance"] for member in body["members"]}
+    assert balances == {"小李": "-50.00", "小王": "50.00"}
+    assert body["members"][1]["member_id"] == inactive_payer_id
+    assert body["transfers"] == [{
+        "from_member_id": body["members"][0]["member_id"],
+        "from_member_name": "小李",
+        "to_member_id": inactive_payer_id,
+        "to_member_name": "小王",
+        "amount": "50.00",
+    }]
 
 
 def test_update_expense_allows_any_member_and_increments_version(test_client):
