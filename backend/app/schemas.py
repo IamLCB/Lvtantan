@@ -38,6 +38,13 @@ class TripCreate(BaseModel):
     name: str = Field(min_length=1, max_length=64)
     created_by_user_id: str
 
+    @field_validator("name", mode="before")
+    @classmethod
+    def strip_name(cls, value: str) -> str:
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
 
 class TripJoin(BaseModel):
     invite_code: str = Field(min_length=6, max_length=6)
