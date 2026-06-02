@@ -21,3 +21,38 @@ class UserResponse(BaseModel):
     last_seen_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class MemberResponse(BaseModel):
+    id: str
+    user_id: str
+    name: str
+    color_hex: str | None
+    status: str
+    joined_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class TripCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+    created_by_user_id: str
+
+
+class TripJoin(BaseModel):
+    invite_code: str = Field(min_length=6, max_length=6)
+    user_id: str
+
+
+class TripResponse(BaseModel):
+    id: str
+    name: str
+    invite_code: str
+    currency_code: str
+    status: str
+    version: int
+    members: list[MemberResponse]
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
