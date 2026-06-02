@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime, timezone
+from decimal import Decimal
 
 from sqlalchemy import DateTime, ForeignKey, Integer, Numeric, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -62,6 +63,14 @@ class Member(Base):
 
     trip: Mapped[Trip] = relationship(back_populates="members")
     user: Mapped[User] = relationship(back_populates="memberships")
+    created_expenses: Mapped[list["Expense"]] = relationship(
+        back_populates="created_by_member",
+        foreign_keys="Expense.created_by_member_id",
+    )
+    paid_expenses: Mapped[list["Expense"]] = relationship(
+        back_populates="paid_by_member",
+        foreign_keys="Expense.paid_by_member_id",
+    )
 
 
 class Category(Base):
@@ -79,7 +88,7 @@ class Expense(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=new_uuid)
     trip_id: Mapped[str] = mapped_column(String, ForeignKey("trips.id"), nullable=False)
-    amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     expression_text: Mapped[str | None] = mapped_column(String, nullable=True)
     created_by_member_id: Mapped[str] = mapped_column(String, ForeignKey("members.id"), nullable=False)
     paid_by_member_id: Mapped[str] = mapped_column(String, ForeignKey("members.id"), nullable=False)
@@ -90,6 +99,14 @@ class Expense(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     trip: Mapped[Trip] = relationship(back_populates="expenses")
+    created_by_member: Mapped[Member] = relationship(
+        back_populates="created_expenses",
+        foreign_keys=[created_by_member_id],
+    )
+    paid_by_member: Mapped[Member] = relationship(
+        back_populates="paid_expenses",
+        foreign_keys=[paid_by_member_id],
+    )
 
 
 class RealtimeEvent(Base):
