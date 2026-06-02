@@ -1,6 +1,11 @@
 import Foundation
 
-final class APIClient {
+protocol TripAPIClient {
+    func getTrip(id: String) async throws -> APITripDetail
+    func createExpense(tripId: String, request: CreateExpenseRequest) async throws -> APIExpense
+}
+
+final class APIClient: TripAPIClient {
     let baseURL: URL
     private let session: URLSession
     private let decoder: JSONDecoder
@@ -33,8 +38,8 @@ final class APIClient {
         try await request("trips/\(id)", method: "GET", body: Optional<String>.none)
     }
 
-    func createExpense(tripId: String, payload: [String: String]) async throws -> APIExpense {
-        try await request("trips/\(tripId)/expenses", method: "POST", body: payload)
+    func createExpense(tripId: String, request: CreateExpenseRequest) async throws -> APIExpense {
+        try await self.request("trips/\(tripId)/expenses", method: "POST", body: request)
     }
 
     func getSettlement(tripId: String) async throws -> APISettlement {
@@ -102,4 +107,13 @@ private struct CreateTripRequest: Encodable {
 private struct JoinTripRequest: Encodable {
     let inviteCode: String
     let userId: String
+}
+
+struct CreateExpenseRequest: Encodable {
+    let userId: String
+    let amount: String
+    let expressionText: String?
+    let categoryName: String
+    let spentAt: Date
+    let note: String?
 }
