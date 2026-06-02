@@ -2,22 +2,36 @@ import SwiftUI
 
 struct RootView: View {
     @EnvironmentObject private var appState: AppState
+    private let sessionStore = SessionStore()
+
+    private var isErrorPresented: Binding<Bool> {
+        Binding {
+            appState.errorMessage != nil
+        } set: { isPresented in
+            if !isPresented {
+                appState.errorMessage = nil
+            }
+        }
+    }
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if appState.currentUser == nil {
-                    Text("旅摊摊")
-                        .font(.largeTitle.bold())
-                        .foregroundStyle(.primary)
-                } else {
-                    Text("账本列表")
-                        .font(.title)
-                        .foregroundStyle(.primary)
-                }
+        Group {
+            if appState.currentUser == nil {
+                UsernameView()
+            } else {
+                TripListView()
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(.systemBackground))
+        }
+        .onAppear {
+            guard appState.currentUser == nil else { return }
+            appState.currentUser = sessionStore.loadUser()
+        }
+        .alert("提示", isPresented: isErrorPresented) {
+            Button("好") {
+                appState.errorMessage = nil
+            }
+        } message: {
+            Text(appState.errorMessage ?? "")
         }
     }
 }
