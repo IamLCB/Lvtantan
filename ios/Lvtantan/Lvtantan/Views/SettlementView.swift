@@ -59,8 +59,8 @@ struct SettlementView: View {
             }
         }
         .navigationTitle("结算")
-        .task {
-            await loadSettlement()
+        .task(id: tripId) {
+            await loadSettlement(for: tripId)
         }
     }
 
@@ -69,10 +69,19 @@ struct SettlementView: View {
     }
 
     @MainActor
-    private func loadSettlement() async {
+    private func loadSettlement(for tripId: String) async {
+        settlement = nil
+
         do {
-            settlement = try await apiClient.getSettlement(tripId: tripId)
+            let loadedSettlement = try await apiClient.getSettlement(tripId: tripId)
+            guard !Task.isCancelled else { return }
+            settlement = loadedSettlement
+        } catch is CancellationError {
+            return
+        } catch let error as URLError where error.code == .cancelled {
+            return
         } catch {
+            guard !Task.isCancelled else { return }
             appState.errorMessage = "获取结算失败"
         }
     }
