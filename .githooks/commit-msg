@@ -1,0 +1,8 @@
+#!/bin/sh
+
+coauthor="Co-authored-by: Codex <codex@openai.com>"
+message_file="$1"
+
+if ! grep -qi "^${coauthor}$" "$message_file"; then
+  printf "\n%s\n" "$coauthor" >> "$message_file"
+fi
