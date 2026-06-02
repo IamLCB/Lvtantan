@@ -9,6 +9,7 @@ final class TripPollerTests: XCTestCase {
         let poller = TripPoller(appState: appState, apiClient: client, interval: .seconds(10))
 
         poller.start(tripId: "trip-a")
+        await client.waitForRequest()
         poller.stop()
 
         client.resume(with: Self.trip(id: "trip-a", version: 1))
@@ -31,12 +32,18 @@ final class TripPollerTests: XCTestCase {
     }
 }
 
+@MainActor
 private final class DelayedTripClient: TripAPIClient {
     private var continuation: CheckedContinuation<APITripDetail, Error>?
+    private var requestContinuation: CheckedContinuation<Void, Never>?
+    private var hasRequest = false
 
     func getTrip(id: String) async throws -> APITripDetail {
         try await withCheckedThrowingContinuation { continuation in
             self.continuation = continuation
+            hasRequest = true
+            requestContinuation?.resume()
+            requestContinuation = nil
         }
     }
 
@@ -47,5 +54,15 @@ private final class DelayedTripClient: TripAPIClient {
     func resume(with trip: APITripDetail) {
         continuation?.resume(returning: trip)
         continuation = nil
+    }
+
+    func waitForRequest() async {
+        guard !hasRequest else {
+            return
+        }
+
+        await withCheckedContinuation { continuation in
+            requestContinuation = continuation
+        }
     }
 }

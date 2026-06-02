@@ -12,6 +12,7 @@ struct ExpenseFormView: View {
     @State private var note = ""
     @State private var isSubmitting = false
     @State private var errorMessage: String?
+    @State private var submissionTask: Task<Void, Never>?
 
     private let apiClient: TripAPIClient = APIClient()
     private let categories = ["餐饮", "交通", "住宿", "门票", "购物", "娱乐", "其他"]
@@ -25,7 +26,7 @@ struct ExpenseFormView: View {
     }
 
     private var canSubmit: Bool {
-        evaluatedAmount != nil && !isSubmitting
+        evaluatedAmount != nil && !isSubmitting && submissionTask == nil
     }
 
     private var evaluatedAmount: Decimal? {
@@ -117,28 +118,31 @@ struct ExpenseFormView: View {
         .onAppear {
             focusedField = .amount
         }
+        .onDisappear {
+            cancelSubmission()
+        }
     }
 
     private func submitIfPossible() {
         guard canSubmit else { return }
         isSubmitting = true
         errorMessage = nil
-        Task {
+        submissionTask = Task {
             await submit()
         }
     }
 
     private func submit() async {
-        defer { isSubmitting = false }
-
         guard let user = appState.currentUser else {
             errorMessage = "保存支出失败，请检查金额"
+            finishSubmission()
             return
         }
 
         do {
             guard let amount = evaluatedAmount else {
                 errorMessage = "保存支出失败，请检查金额"
+                finishSubmission()
                 return
             }
             let request = CreateExpenseRequest(
@@ -150,10 +154,18 @@ struct ExpenseFormView: View {
                 note: trimmedNote.isEmpty ? nil : trimmedNote
             )
             _ = try await apiClient.createExpense(tripId: trip.id, request: request)
+            guard !Task.isCancelled else { return }
+
             await onSaved()
+            guard !Task.isCancelled else { return }
+
+            finishSubmission()
             dismiss()
         } catch {
+            guard !Task.isCancelled else { return }
+
             errorMessage = "保存支出失败，请检查金额"
+            finishSubmission()
         }
     }
 
@@ -170,6 +182,17 @@ struct ExpenseFormView: View {
         formatter.maximumFractionDigits = 2
         formatter.usesGroupingSeparator = false
         return formatter.string(from: NSDecimalNumber(decimal: decimal)) ?? "\(decimal)"
+    }
+
+    private func finishSubmission() {
+        isSubmitting = false
+        submissionTask = nil
+    }
+
+    private func cancelSubmission() {
+        submissionTask?.cancel()
+        submissionTask = nil
+        isSubmitting = false
     }
 }
 
