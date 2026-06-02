@@ -28,6 +28,7 @@ struct UsernameView: View {
 
                 TextField("输入用户名", text: $username)
                     .textFieldStyle(.roundedBorder)
+                    .frame(minHeight: 44)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .submitLabel(.go)
