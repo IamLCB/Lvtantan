@@ -3,9 +3,21 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Member, Trip, User
-from app.schemas import TripCreate, TripJoin, TripResponse
+from app.models import Category, Expense, Member, RealtimeEvent, Trip, User
+from app.schemas import (
+    ChangesResponse,
+    ExpenseResponse,
+    RealtimeEventResponse,
+    SettlementMemberResponse,
+    SettlementResponse,
+    SettlementTransferResponse,
+    TripCreate,
+    TripDetailResponse,
+    TripJoin,
+    TripResponse,
+)
 from app.services.invite_codes import generate_invite_code
+from app.services.settlements import ExpenseInput, MemberInput, calculate_settlement
 
 router = APIRouter(prefix="/trips", tags=["trips"])
 MAX_INVITE_CODE_ATTEMPTS = 5
@@ -16,6 +28,13 @@ def find_user(db: Session, user_id: str) -> User:
     if user is None:
         raise HTTPException(status_code=404, detail="user not found")
     return user
+
+
+def find_trip(db: Session, trip_id: str) -> Trip:
+    trip = db.get(Trip, trip_id)
+    if trip is None:
+        raise HTTPException(status_code=404, detail="trip not found")
+    return trip
 
 
 def serialize_trip(trip: Trip) -> TripResponse:
@@ -34,6 +53,36 @@ def serialize_trip(trip: Trip) -> TripResponse:
     })
 
 
+def to_expense_response(db: Session, expense: Expense) -> ExpenseResponse:
+    category = db.get(Category, expense.category_id)
+    return ExpenseResponse(
+        id=expense.id,
+        trip_id=expense.trip_id,
+        amount=f"{expense.amount:.2f}",
+        expression_text=expense.expression_text,
+        created_by_member_id=expense.created_by_member_id,
+        paid_by_member_id=expense.paid_by_member_id,
+        category_name=category.name if category is not None else "",
+        spent_at=expense.spent_at,
+        note=expense.note,
+        created_at=expense.created_at,
+        updated_at=expense.updated_at,
+    )
+
+
+def serialize_trip_detail(db: Session, trip: Trip) -> TripDetailResponse:
+    trip_response = serialize_trip(trip)
+    expenses = sorted(trip.expenses, key=lambda expense: expense.spent_at, reverse=True)
+    return TripDetailResponse(
+        **trip_response.model_dump(),
+        expenses=[to_expense_response(db, expense) for expense in expenses],
+    )
+
+
+def format_money(value) -> str:
+    return f"{value:.2f}"
+
+
 def find_trip_by_invite_code(db: Session, invite_code: str) -> Trip | None:
     return db.query(Trip).filter(Trip.invite_code == invite_code.upper()).first()
 
@@ -46,6 +95,79 @@ def reject_duplicate_member_name(db: Session, trip: Trip, user: User) -> None:
     existing_name_member = db.query(Member).filter(Member.trip_id == trip.id, Member.name == user.username).first()
     if existing_name_member is not None:
         raise HTTPException(status_code=409, detail="username already exists in this trip")
+
+
+@router.get("/{trip_id}", response_model=TripDetailResponse)
+def get_trip(trip_id: str, db: Session = Depends(get_db)) -> TripDetailResponse:
+    trip = find_trip(db, trip_id)
+    return serialize_trip_detail(db, trip)
+
+
+@router.get("/{trip_id}/settlement", response_model=SettlementResponse)
+def get_settlement(trip_id: str, db: Session = Depends(get_db)) -> SettlementResponse:
+    trip = find_trip(db, trip_id)
+    active_members = [member for member in trip.members if member.status == "active"]
+    active_members.sort(key=lambda member: member.joined_at)
+    result = calculate_settlement(
+        members=[MemberInput(id=member.id, name=member.name) for member in active_members],
+        expenses=[
+            ExpenseInput(amount=expense.amount, paid_by_member_id=expense.paid_by_member_id)
+            for expense in trip.expenses
+            if any(member.id == expense.paid_by_member_id for member in active_members)
+        ],
+    )
+    member_names = {member.id: member.name for member in active_members}
+    members = []
+    for member in active_members:
+        summary = result.member_summaries[member.id]
+        members.append(
+            SettlementMemberResponse(
+                member_id=summary.member_id,
+                name=summary.name,
+                paid=format_money(summary.paid),
+                owed=format_money(summary.owed),
+                balance=format_money(summary.balance),
+            )
+        )
+    transfers = [
+        SettlementTransferResponse(
+            from_member_id=transfer.from_member_id,
+            from_member_name=member_names[transfer.from_member_id],
+            to_member_id=transfer.to_member_id,
+            to_member_name=member_names[transfer.to_member_id],
+            amount=format_money(transfer.amount),
+        )
+        for transfer in result.transfers
+    ]
+    return SettlementResponse(members=members, transfers=transfers)
+
+
+@router.get("/{trip_id}/changes", response_model=ChangesResponse)
+def get_changes(
+    trip_id: str,
+    since_version: int = 0,
+    db: Session = Depends(get_db),
+) -> ChangesResponse:
+    trip = find_trip(db, trip_id)
+    events = (
+        db.query(RealtimeEvent)
+        .filter(RealtimeEvent.trip_id == trip.id, RealtimeEvent.version > since_version)
+        .order_by(RealtimeEvent.version.asc(), RealtimeEvent.created_at.asc())
+        .all()
+    )
+    return ChangesResponse(
+        current_version=trip.version,
+        events=[
+            RealtimeEventResponse(
+                entity_type=event.entity_type,
+                entity_id=event.entity_id,
+                action=event.action,
+                version=event.version,
+                created_at=event.created_at,
+            )
+            for event in events
+        ],
+    )
 
 
 @router.post("", response_model=TripResponse, status_code=status.HTTP_201_CREATED)
